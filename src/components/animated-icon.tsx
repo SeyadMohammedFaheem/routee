@@ -1,8 +1,9 @@
 import { Image } from 'expo-image';
 import { useState } from 'react';
 import { Dimensions, StyleSheet, View } from 'react-native';
-import Animated, { Easing, Keyframe } from 'react-native-reanimated';
-import { scheduleOnRN } from 'react-native-worklets';
+import Animated, { Easing, Keyframe, runOnJS } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Text } from '@/components/Text';
 
 const INITIAL_SCALE_FACTOR = Dimensions.get('screen').height / 90;
 const DURATION = 600;
@@ -13,34 +14,36 @@ export function AnimatedSplashOverlay() {
   if (!visible) return null;
 
   const splashKeyframe = new Keyframe({
-    0: {
-      transform: [{ scale: INITIAL_SCALE_FACTOR }],
-      opacity: 1,
-    },
-    20: {
-      opacity: 1,
-    },
-    70: {
-      opacity: 0,
-      easing: Easing.elastic(0.7),
-    },
-    100: {
-      opacity: 0,
-      transform: [{ scale: 1 }],
-      easing: Easing.elastic(0.7),
-    },
+    0: { opacity: 1 },
+    80: { opacity: 1 },
+    100: { opacity: 0 },
   });
 
   return (
     <Animated.View
-      entering={splashKeyframe.duration(DURATION).withCallback((finished) => {
+      entering={splashKeyframe.duration(2000).withCallback((finished) => {
         'worklet';
         if (finished) {
-          scheduleOnRN(setVisible, false);
+          runOnJS(setVisible)(false);
         }
       })}
-      style={styles.backgroundSolidColor}
-    />
+      style={styles.splashOverlayContainer}
+    >
+      <LinearGradient
+        colors={['#0055FF', '#5CA9FF', '#FFFFFF']}
+        locations={[0, 0.7, 1]}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={styles.splashContent}>
+        <View style={styles.appIconWrapper}>
+          <Image 
+            source={require('@/assets/images/icon.png')} 
+            style={styles.appIcon}
+          />
+        </View>
+        <Text style={styles.splashText}>Routee</Text>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -128,5 +131,35 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     backgroundColor: '#208AEF',
     zIndex: 1000,
+  },
+  splashOverlayContainer: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 9999,
+  },
+  splashContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 40,
+  },
+  appIconWrapper: {
+    width: 80,
+    height: 80,
+    borderRadius: 20,
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  appIcon: {
+    width: 80,
+    height: 80,
+  },
+  splashText: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#FFF',
+    letterSpacing: -0.5,
   },
 });
