@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Dimensions, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/Text';
 import { useTripContext } from '@/context/TripContext';
+import { searchFlights } from '@/services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -19,7 +20,7 @@ export default function FlightsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  const { destinations, passengers, departDate, setSelectedFlights } = useTripContext();
+  const { destinations, passengers, departDate, setSelectedFlights, userSettings } = useTripContext();
   const totalPassengers = passengers.adults + passengers.children + passengers.infants;
 
   // Generate dynamic legs from destinations
@@ -39,7 +40,9 @@ export default function FlightsScreen() {
     legs.push({
       id: i,
       from: from.name,
+      fromCode: from.code,
       to: to.name,
+      toCode: to.code,
       nights: to.isEnd ? 'End destination' : `${to.nights} nights in ${to.code}`,
       date: legDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
       dateObj: legDate
@@ -49,6 +52,8 @@ export default function FlightsScreen() {
   const [currentLegIndex, setCurrentLegIndex] = useState(0);
   const [selectedFlightId, setSelectedFlightId] = useState('2');
   const [activeFilter, setActiveFilter] = useState('Cheapest');
+  const [dynamicFlights, setDynamicFlights] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const filters = ['Cheapest', 'Fastest', 'Non-stop'];
 
@@ -62,12 +67,28 @@ export default function FlightsScreen() {
   const leg = legs[safeLegIndex];
   const isLastLeg = safeLegIndex === legs.length - 1;
 
-  // Simple pseudo-randomizer to scramble prices and times slightly based on the leg, making it feel real
-  const dynamicFlights = FLIGHTS.map(f => {
-    const randomMultiplier = 1 + (currentLegIndex * 0.2) + ((f.price % 3) * 0.1);
-    const newPrice = Math.round((f.price * randomMultiplier) / 50) * 50;
-    return { ...f, price: newPrice };
-  });
+  useEffect(() => {
+    if (!leg) return;
+    setIsLoading(true);
+    setDynamicFlights([]);
+    
+    searchFlights(leg.fromCode, leg.toCode, leg.dateObj, totalPassengers, userSettings?.currency || 'INR').then(results => {
+      if (results && results.length > 0) {
+        setDynamicFlights(results.map((r: any, i: number) => ({...r, isBest: i === 0})));
+        setSelectedFlightId(results[0].id);
+      } else {
+        // Simple pseudo-randomizer to scramble prices and times slightly based on the leg, making it feel real
+        const mock = FLIGHTS.map(f => {
+          const randomMultiplier = 1 + (currentLegIndex * 0.2) + ((f.price % 3) * 0.1);
+          const newPrice = Math.round((f.price * randomMultiplier) / 50) * 50;
+          return { ...f, price: newPrice };
+        });
+        setDynamicFlights(mock);
+        setSelectedFlightId(mock[0].id);
+      }
+      setIsLoading(false);
+    });
+  }, [currentLegIndex, safeLegIndex]);
 
   const handleSelectFlight = () => {
     const selectedFlightObj = dynamicFlights.find(f => f.id === selectedFlightId)!;
@@ -155,38 +176,45 @@ export default function FlightsScreen() {
         </View>
 
         {/* Flight List */}
-        <ScrollView contentContainerStyle={styles.flightsScroll} showsVerticalScrollIndicator={false}>
-          {dynamicFlights.map((flight) => {
-            const isSelected = selectedFlightId === flight.id;
-            return (
-              <TouchableOpacity 
-                key={flight.id} 
-                style={[styles.flightCard, isSelected && styles.flightCardSelected]}
-                onPress={() => setSelectedFlightId(flight.id)}
-                activeOpacity={0.9}
-              >
-                <View style={styles.flightMain}>
-                  <View style={[styles.airlineLogo, isSelected && styles.airlineLogoSelected]}>
-                    <Text style={[styles.airlineCode, isSelected && styles.airlineCodeSelected]}>{flight.code}</Text>
+        {isLoading ? (
+          <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+            <ActivityIndicator size="large" color="#0055FF" />
+            <Text style={{marginTop: 16, color: '#8E8E93', fontWeight: '500'}}>Searching flights...</Text>
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.flightsScroll} showsVerticalScrollIndicator={false}>
+            {dynamicFlights.map((flight) => {
+              const isSelected = selectedFlightId === flight.id;
+              return (
+                <TouchableOpacity 
+                  key={flight.id} 
+                  style={[styles.flightCard, isSelected && styles.flightCardSelected]}
+                  onPress={() => setSelectedFlightId(flight.id)}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.flightMain}>
+                    <View style={[styles.airlineLogo, isSelected && styles.airlineLogoSelected]}>
+                      <Text style={[styles.airlineCode, isSelected && styles.airlineCodeSelected]}>{flight.code}</Text>
+                    </View>
+                    <View style={styles.flightDetails}>
+                      <Text style={styles.flightTime}>{flight.depart} ➔ {flight.arrive}</Text>
+                      <Text style={styles.flightSub}>{flight.airline} · {flight.duration} · {flight.type || (flight.stops === 0 ? 'Non-stop' : `${flight.stops} stop`)}</Text>
+                    </View>
+                    <View style={styles.priceContainer}>
+                      {flight.isBest && (
+                        <View style={styles.bestPill}>
+                          <Text style={styles.bestPillText}>BEST</Text>
+                        </View>
+                      )}
+                      <Text style={[styles.priceText, isSelected && styles.priceTextSelected]}>₹{flight.price.toLocaleString('en-IN')}</Text>
+                      <Text style={[styles.perPersonText, isSelected && styles.perPersonTextSelected]}>per person</Text>
+                    </View>
                   </View>
-                  <View style={styles.flightDetails}>
-                    <Text style={styles.flightTime}>{flight.depart} ➔ {flight.arrive}</Text>
-                    <Text style={styles.flightSub}>{flight.airline} · {flight.duration} · {flight.type}</Text>
-                  </View>
-                  <View style={styles.priceContainer}>
-                    {flight.isBest && (
-                      <View style={styles.bestPill}>
-                        <Text style={styles.bestPillText}>BEST</Text>
-                      </View>
-                    )}
-                    <Text style={[styles.priceText, isSelected && styles.priceTextSelected]}>₹{flight.price.toLocaleString('en-IN')}</Text>
-                    <Text style={[styles.perPersonText, isSelected && styles.perPersonTextSelected]}>per person</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
       </View>
 
       {/* Sticky Bottom Bar */}

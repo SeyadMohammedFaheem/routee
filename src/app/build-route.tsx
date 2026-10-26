@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
-import { View, StyleSheet, TouchableOpacity, Dimensions, ScrollView, TextInput, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, Dimensions, ScrollView, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Animated } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/Text';
 import { useTripContext } from '@/context/TripContext';
+import { searchDestinations } from '@/services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -73,12 +74,35 @@ export default function BuildRouteScreen() {
   // State for the active search input
   const [searchQuery, setSearchQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showDraftModal, setShowDraftModal] = useState(false);
 
-  // Filter the DB based on the search query
-  const filteredSuggestions = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const lowerQuery = searchQuery.toLowerCase();
-    return CITIES_DB.filter(city => city.name.toLowerCase().includes(lowerQuery));
+  // Debounced API search
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSuggestions([]);
+      return;
+    }
+    
+    setIsLoading(true);
+    const delayDebounceFn = setTimeout(async () => {
+      const results = await searchDestinations(searchQuery);
+      if (results) {
+        setSuggestions(results.map((r: any) => ({
+          ...r,
+          subtitle: r.country,
+          icon: 'airplane-outline' // Tequila locations mostly return airports/cities
+        })));
+      } else {
+        // Fallback to mock data if API is not configured or failed
+        const lowerQuery = searchQuery.toLowerCase();
+        setSuggestions(CITIES_DB.filter(city => city.name.toLowerCase().includes(lowerQuery)));
+      }
+      setIsLoading(false);
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
   }, [searchQuery]);
 
   // Add a selected suggestion to the route
@@ -107,20 +131,7 @@ export default function BuildRouteScreen() {
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => {
-          Alert.alert(
-            "Save Draft?",
-            "You have an unsaved trip. Would you like to save it as a draft?",
-            [
-              { text: "Discard", onPress: () => router.back(), style: "destructive" },
-              { text: "Save Draft", onPress: () => {
-                  saveTripAsDraft();
-                  router.back();
-              }},
-              { text: "Cancel", style: "cancel" }
-            ]
-          );
-        }}>
+        <TouchableOpacity style={styles.backButton} onPress={() => setShowDraftModal(true)}>
           <Ionicons name="arrow-back" size={20} color="#1A1A1A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Build route</Text>
@@ -170,11 +181,11 @@ export default function BuildRouteScreen() {
             <View style={styles.timelineLine} />
             
             {/* Render Selected Destinations */}
-            {destinations.map((dest, index) => (
-              <View key={dest.id} style={styles.timelineRow}>
+            {destinations.filter(d => d && d.name).map((dest, index) => (
+              <View key={`${dest.id}-${index}`} style={styles.timelineRow}>
                 <View style={dest.isStart ? styles.dotGreen : styles.dotBlue} />
                 <View style={styles.inputCard}>
-                  <Text style={styles.inputText}>{dest.name} ({dest.code})</Text>
+                  <Text style={styles.inputText}>{dest.name} {dest.code ? `(${dest.code})` : ''}</Text>
                   <View style={styles.checkIcon}>
                     <Ionicons name="checkmark-circle" size={18} color="#20C968" />
                   </View>
@@ -212,16 +223,17 @@ export default function BuildRouteScreen() {
           {/* Suggestions Dropdown (Only show if searching) */}
           {searchQuery.trim().length > 0 && (
             <View style={styles.suggestionsContainer}>
-              <View style={styles.suggestionsHeader}>
+              <View style={[styles.suggestionsHeader, { flexDirection: 'row', alignItems: 'center' }]}>
                 <Text style={styles.suggestionsTitle}>SUGGESTIONS</Text>
+                {isLoading && <ActivityIndicator size="small" color="#0055FF" style={{marginLeft: 8}} />}
               </View>
 
-              {filteredSuggestions.length === 0 ? (
+              {(!isLoading && suggestions.length === 0) ? (
                 <View style={styles.noResultsContainer}>
                   <Text style={styles.noResultsText}>No destinations found.</Text>
                 </View>
               ) : (
-                filteredSuggestions.map((suggestion, index) => {
+                suggestions.map((suggestion, index) => {
                   // Logic to highlight the matching part of the name
                   const matchIndex = suggestion.name.toLowerCase().indexOf(searchQuery.toLowerCase());
                   const beforeMatch = suggestion.name.substring(0, matchIndex);
@@ -269,6 +281,63 @@ export default function BuildRouteScreen() {
           <Text style={styles.continueButtonText}>Continue</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Save Draft Modal */}
+      <Modal
+        visible={showDraftModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowDraftModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            {/* Icon */}
+            <View style={styles.modalIconCircle}>
+              <Ionicons name="bookmark-outline" size={28} color="#0055FF" />
+            </View>
+
+            {/* Text */}
+            <Text style={styles.modalTitle}>Save as Draft?</Text>
+            <Text style={styles.modalSubtitle}>
+              You have an unsaved trip. Would you like to save it and continue later?
+            </Text>
+
+            {/* Buttons */}
+            <TouchableOpacity
+              style={styles.modalPrimaryButton}
+              activeOpacity={0.85}
+              onPress={() => {
+                saveTripAsDraft();
+                setShowDraftModal(false);
+                router.back();
+              }}
+            >
+              <Ionicons name="bookmark" size={18} color="#FFF" style={{ marginRight: 8 }} />
+              <Text style={styles.modalPrimaryButtonText}>Save Draft</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalDestructiveButton}
+              activeOpacity={0.85}
+              onPress={() => {
+                setShowDraftModal(false);
+                router.back();
+              }}
+            >
+              <Text style={styles.modalDestructiveButtonText}>Discard & Leave</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              activeOpacity={0.85}
+              onPress={() => setShowDraftModal(false)}
+            >
+              <Text style={styles.modalCancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -587,5 +656,90 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+
+  // Save Draft Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 30,
+  },
+  modalCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  modalIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#EBF5FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 28,
+  },
+  modalPrimaryButton: {
+    flexDirection: 'row',
+    backgroundColor: '#0055FF',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginBottom: 12,
+  },
+  modalPrimaryButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalDestructiveButton: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginBottom: 12,
+  },
+  modalDestructiveButtonText: {
+    color: '#EF4444',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalCancelButton: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  modalCancelButtonText: {
+    color: '#9CA3AF',
+    fontSize: 15,
+    fontWeight: '500',
   },
 });

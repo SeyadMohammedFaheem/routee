@@ -1,14 +1,34 @@
 import React from 'react';
-import { StyleSheet, View, Image, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import { StyleSheet, View, Image, ScrollView, TouchableOpacity, Dimensions, TextInput, Keyboard, StatusBar } from 'react-native';
 import { Text } from '@/components/Text';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Link, useRouter, Redirect } from 'expo-router';
 import { useTripContext } from '@/context/TripContext';
 import StoryModal from '@/components/StoryModal';
 
-const { width } = Dimensions.get('window');
+const CITIES_DB = [
+  { id: 'bom', name: 'Mumbai', code: 'BOM', subtitle: 'Chhatrapati Shivaji Intl' },
+  { id: 'del', name: 'New Delhi', code: 'DEL', subtitle: 'Indira Gandhi Intl' },
+  { id: 'blr', name: 'Bangalore', code: 'BLR', subtitle: 'Kempegowda Intl' },
+  { id: 'hyd', name: 'Hyderabad', code: 'HYD', subtitle: 'Rajiv Gandhi Intl' },
+  { id: 'maa', name: 'Chennai', code: 'MAA', subtitle: 'Chennai Intl' },
+  { id: 'ccu', name: 'Kolkata', code: 'CCU', subtitle: 'Netaji Subhas Chandra Bose Intl' },
+  { id: 'goi', name: 'Goa', code: 'GOI', subtitle: 'Dabolim Airport' },
+  { id: 'pnq', name: 'Pune', code: 'PNQ', subtitle: 'Pune Airport' },
+  { id: 'amd', name: 'Ahmedabad', code: 'AMD', subtitle: 'Sardar Vallabhbhai Patel Intl' },
+  { id: 'cok', name: 'Kochi', code: 'COK', subtitle: 'Cochin Intl' },
+  { id: 'dxb', name: 'Dubai', code: 'DXB', subtitle: 'Dubai Intl, UAE' },
+  { id: 'sin', name: 'Singapore', code: 'SIN', subtitle: 'Changi Airport' },
+  { id: 'bkk', name: 'Bangkok', code: 'BKK', subtitle: 'Suvarnabhumi, Thailand' },
+  { id: 'hnd', name: 'Tokyo', code: 'HND', subtitle: 'Haneda Airport, Japan' },
+  { id: 'icn', name: 'Seoul', code: 'ICN', subtitle: 'Incheon Intl, South Korea' },
+  { id: 'lhr', name: 'London', code: 'LHR', subtitle: 'Heathrow, UK' },
+  { id: 'jfk', name: 'New York', code: 'JFK', subtitle: 'JFK Intl, USA' },
+  { id: 'syd', name: 'Sydney', code: 'SYD', subtitle: 'Sydney Airport, Australia' },
+];
+
+const { width, height: screenHeight } = Dimensions.get('window');
 
 const destinations = [
   { name: 'Goa', image: 'https://images.unsplash.com/photo-1512343879784-a960bf40e7f2?auto=format&fit=crop&w=200&q=80' },
@@ -20,9 +40,106 @@ const destinations = [
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { hasSeenOnboarding, notifications, profileImageUri, userProfile } = useTripContext();
+  const insets = useSafeAreaInsets();
+  const { 
+    hasSeenOnboarding, 
+    notifications, 
+    profileImageUri, 
+    userProfile, 
+    destinations: tripDestinations, 
+    setDestinations 
+  } = useTripContext();
+  
+  const [tripType, setTripType] = React.useState<'single' | 'multi'>('single');
   const [activeStory, setActiveStory] = React.useState<{ name: string; image: string } | null>(null);
   const [seenStories, setSeenStories] = React.useState<string[]>([]);
+
+  // Inline search state for single trip
+  const [editingField, setEditingField] = React.useState<'origin' | 'dest' | null>(null);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [suggestions, setSuggestions] = React.useState<typeof CITIES_DB>([]);
+
+  const fromCityName = tripDestinations?.[0]?.name || 'Mumbai';
+  const fromCityCode = tripDestinations?.[0]?.code || 'BOM';
+  const fromDisplayText = fromCityCode ? `${fromCityName} - ${fromCityCode}` : fromCityName;
+
+  const toCityName = (tripDestinations && tripDestinations.length > 1 && tripDestinations[1]?.name) 
+    ? tripDestinations[1].name 
+    : 'Bangalore';
+  const toCityCode = (tripDestinations && tripDestinations.length > 1 && tripDestinations[1]?.code) 
+    ? tripDestinations[1].code 
+    : 'BLR';
+  const toDisplayText = toCityCode ? `${toCityName} - ${toCityCode}` : toCityName;
+
+  const handleFieldPress = (field: 'origin' | 'dest') => {
+    setEditingField(field);
+    setSearchQuery('');
+    setSuggestions(CITIES_DB.slice(0, 6));
+  };
+
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    if (!text.trim()) {
+      setSuggestions(CITIES_DB.slice(0, 6));
+      return;
+    }
+    const lower = text.toLowerCase();
+    setSuggestions(CITIES_DB.filter(c => 
+      c.name.toLowerCase().includes(lower) || c.code.toLowerCase().includes(lower)
+    ).slice(0, 6));
+  };
+
+  const handleCitySelect = (city: { id: string; name: string; code: string; subtitle?: string }) => {
+    const updated = tripDestinations ? [...tripDestinations] : [];
+    const newDest = { id: city.id, name: city.name, code: city.code, isStart: false, nights: 2, isEnd: false };
+    
+    if (editingField === 'origin') {
+      if (updated.length === 0) {
+        updated.push({ ...newDest, isStart: true });
+      } else {
+        updated[0] = { ...updated[0], ...newDest, isStart: true };
+      }
+    } else {
+      if (updated.length < 2) {
+        while (updated.length < 1) updated.push({ id: 'placeholder', name: '', code: '', isStart: true, nights: 0, isEnd: false });
+        updated.push({ ...newDest, isEnd: true });
+      } else {
+        updated[1] = { ...updated[1], ...newDest, isEnd: true };
+      }
+    }
+    setDestinations(updated);
+    setEditingField(null);
+    setSearchQuery('');
+    Keyboard.dismiss();
+  };
+
+  const handleCustomCitySubmit = () => {
+    if (!searchQuery.trim()) return;
+    const trimmed = searchQuery.trim();
+    const match = CITIES_DB.find(c => c.name.toLowerCase() === trimmed.toLowerCase() || c.code.toLowerCase() === trimmed.toLowerCase())
+      || suggestions[0];
+    if (match) {
+      handleCitySelect(match);
+    } else {
+      const customCity = {
+        id: `custom_${Date.now()}`,
+        name: trimmed,
+        code: trimmed.slice(0, 3).toUpperCase(),
+        subtitle: 'Custom Location',
+      };
+      handleCitySelect(customCity);
+    }
+  };
+
+  const handleSwap = () => {
+    if (tripDestinations && tripDestinations.length >= 2) {
+      const updated = [...tripDestinations];
+      const temp = updated[0];
+      updated[0] = { ...updated[1], isStart: true, isEnd: false };
+      updated[1] = { ...temp, isStart: false, isEnd: updated.length === 2 };
+      setDestinations(updated);
+    }
+  };
 
   const handleStoryPress = (dest: { name: string; image: string }) => {
     setActiveStory(dest);
@@ -50,51 +167,233 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <View style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.profileSection}>
+        {/* Sky Atmosphere Backdrop */}
+        <View pointerEvents="none" style={styles.skyBackdrop}>
+          <Image 
+            source={require('@/../assets/images/sky-bg.jpg')} 
+            style={StyleSheet.absoluteFill} 
+            resizeMode="cover"
+          />
+        </View>
+
+        {/* Header Row */}
+        <View style={[styles.headerRow, { marginTop: Math.max(insets.top, 16) + 6 }]}>
+          <View style={styles.profileInfo}>
             <Image 
               source={{ uri: profileImageUri }} 
-              style={styles.profilePic} 
+              style={styles.profileAvatar} 
             />
             <View>
-              <Text style={styles.greeting}>Good morning 👋</Text>
-              <Text style={styles.userName}>{userProfile.name}</Text>
+              <Text style={styles.greetingText}>Hello 👋</Text>
+              <Text style={styles.userNameText}>{userProfile.name}</Text>
             </View>
           </View>
-          <TouchableOpacity style={styles.notificationBtn} onPress={() => router.push('/notifications')}>
-            <Ionicons name="notifications-outline" size={22} color="#1A1A1A" />
-            {notifications.length > 0 && <View style={styles.notificationDot} />}
+          <TouchableOpacity 
+            style={styles.bellButton} 
+            onPress={() => router.push('/notifications')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
+            {notifications.length > 0 && <View style={styles.bellDot} />}
           </TouchableOpacity>
         </View>
 
-        {/* Combined Search and Promo Card */}
-        <View style={styles.combinedCard}>
-          <View style={styles.searchSection}>
-            <Text style={styles.searchTitle}>Where to?</Text>
-            <Text style={styles.searchSubtitle}>Anywhere • Any week • Add guests</Text>
+        {/* Hero Headline */}
+        <View style={styles.heroSection}>
+          <Text style={styles.heroEyebrow}>Seamless Flight Booking</Text>
+          <Text style={styles.heroHeadline}>Experience</Text>
+        </View>
+
+        {/* Segmented Toggle: Single Trip / Multi City */}
+        <View style={styles.segmentedToggleRow}>
+          <TouchableOpacity 
+            style={[styles.togglePill, tripType === 'single' && styles.togglePillActive]}
+            onPress={() => setTripType('single')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.togglePillText, tripType === 'single' && styles.togglePillTextActive]}>
+              Single Trip
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.togglePill, tripType === 'multi' && styles.togglePillActive]}
+            onPress={() => {
+              setTripType('multi');
+              router.push('/build-route');
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.togglePillText, tripType === 'multi' && styles.togglePillTextActive]}>
+              Multi City
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Origin & Destination Flight Card */}
+        <View style={styles.flightSearchCard}>
+          {/* Departure Row */}
+          <TouchableOpacity 
+            style={[styles.flightLocationRow, editingField === 'origin' && styles.flightLocationRowActive]}
+            activeOpacity={0.8}
+            onPress={() => handleFieldPress('origin')}
+          >
+            <Ionicons name="airplane-outline" size={20} color={editingField === 'origin' ? '#0055FF' : '#6B7280'} style={styles.planeIconDepart} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.flightFieldLabel}>From</Text>
+              {editingField === 'origin' ? (
+                <View style={styles.inlineInputRow}>
+                  <TextInput
+                    style={styles.flightInputInline}
+                    value={searchQuery}
+                    onChangeText={handleSearchChange}
+                    placeholder="Type city or airport..."
+                    placeholderTextColor="#9CA3AF"
+                    autoFocus
+                    returnKeyType="done"
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    onSubmitEditing={handleCustomCitySubmit}
+                  />
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => handleSearchChange('')} style={{ padding: 4 }}>
+                      <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : (
+                <Text style={styles.flightCityText}>
+                  {fromDisplayText}
+                </Text>
+              )}
+            </View>
+            <Ionicons 
+              name={editingField === 'origin' ? 'chevron-up' : 'pencil'} 
+              size={16} 
+              color={editingField === 'origin' ? '#0055FF' : '#9CA3AF'} 
+              style={{ marginRight: 4 }} 
+            />
+          </TouchableOpacity>
+
+          {/* Divider & Floating Swap Button */}
+          <View style={styles.flightDividerContainer}>
+            <View style={styles.flightDividerLine} />
+            <TouchableOpacity 
+              style={styles.flightSwapButton}
+              onPress={handleSwap}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="swap-vertical" size={18} color="#0F172A" />
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/build-route')}>
-            <LinearGradient 
-              colors={['#007BFF', '#0022AA']} 
-              start={{ x: 0, y: 0 }} 
-              end={{ x: 1, y: 1 }} 
-              style={styles.promoBanner}
-            >
-              <View style={styles.promoContent}>
-                <View style={styles.promoIconContainer}>
-                  <Ionicons name="options-outline" size={20} color="#007BFF" />
+          {/* Arrival Row */}
+          <TouchableOpacity 
+            style={[styles.flightLocationRow, editingField === 'dest' && styles.flightLocationRowActive]}
+            activeOpacity={0.8}
+            onPress={() => handleFieldPress('dest')}
+          >
+            <Ionicons name="airplane-outline" size={20} color={editingField === 'dest' ? '#0055FF' : '#6B7280'} style={styles.planeIconArrive} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.flightFieldLabel}>To</Text>
+              {editingField === 'dest' ? (
+                <View style={styles.inlineInputRow}>
+                  <TextInput
+                    style={styles.flightInputInline}
+                    value={searchQuery}
+                    onChangeText={handleSearchChange}
+                    placeholder="Type city or airport..."
+                    placeholderTextColor="#9CA3AF"
+                    autoFocus
+                    returnKeyType="done"
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    onSubmitEditing={handleCustomCitySubmit}
+                  />
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => handleSearchChange('')} style={{ padding: 4 }}>
+                      <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <Text style={styles.promoText}>Plan multi-city — add{'\n'}cities + nights</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#FFF" />
-            </LinearGradient>
+              ) : (
+                <Text style={styles.flightCityText}>
+                  {toDisplayText}
+                </Text>
+              )}
+            </View>
+            <Ionicons 
+              name={editingField === 'dest' ? 'chevron-up' : 'pencil'} 
+              size={16} 
+              color={editingField === 'dest' ? '#0055FF' : '#9CA3AF'} 
+              style={{ marginRight: 4 }} 
+            />
           </TouchableOpacity>
+
+          {/* Search Flights Button */}
+          {tripDestinations && tripDestinations.length >= 2 && tripDestinations[0]?.name && tripDestinations[1]?.name && (
+            <TouchableOpacity 
+              style={styles.searchFlightsButton}
+              activeOpacity={0.85}
+              onPress={() => router.push('/flights')}
+            >
+              <Ionicons name="search" size={18} color="#FFF" style={{ marginRight: 8 }} />
+              <Text style={styles.searchFlightsText}>Search Flights</Text>
+            </TouchableOpacity>
+          )}
         </View>
+
+        {/* Inline City Suggestions Dropdown */}
+        {editingField && (
+          <View style={styles.searchDropdown}>
+            <View style={styles.suggestionsHeader}>
+              <Text style={styles.suggestionsTitle}>
+                {editingField === 'origin' ? 'SELECT ORIGIN CITY' : 'SELECT DESTINATION CITY'}
+              </Text>
+              <TouchableOpacity onPress={() => { setEditingField(null); setSearchQuery(''); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.suggestionsScroll} keyboardShouldPersistTaps="handled">
+              {suggestions.map(city => (
+                <TouchableOpacity 
+                  key={city.id}
+                  style={styles.suggestionRow}
+                  activeOpacity={0.7}
+                  onPress={() => handleCitySelect(city)}
+                >
+                  <View style={styles.suggestionIconCircle}>
+                    <Ionicons name="airplane" size={15} color="#0055FF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestionName}>{city.name} - {city.code}</Text>
+                    {city.subtitle ? <Text style={styles.suggestionSubtitle}>{city.subtitle}</Text> : null}
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {suggestions.length === 0 && searchQuery.trim().length > 0 && (
+                <TouchableOpacity 
+                  style={styles.suggestionRow}
+                  activeOpacity={0.7}
+                  onPress={handleCustomCitySubmit}
+                >
+                  <View style={styles.suggestionIconCircle}>
+                    <Ionicons name="location" size={15} color="#0055FF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestionName}>{searchQuery.trim()}</Text>
+                    <Text style={styles.suggestionSubtitle}>Tap to use this custom location</Text>
+                  </View>
+                  <Ionicons name="arrow-forward" size={16} color="#0055FF" />
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Destinations Carousel */}
         <ScrollView 
@@ -245,108 +544,316 @@ export default function HomeScreen() {
         destination={activeStory}
         onNextDestination={handleNextStory}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F7F7F9',
+    backgroundColor: '#FFFFFF',
   },
   scrollContent: {
     paddingBottom: 40,
   },
-  header: {
+  skyBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: Math.round(screenHeight * 0.5),
+  },
+  headerRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
+    marginHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 16,
+    paddingVertical: 4,
   },
-  profileSection: {
+  profileInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  profilePic: {
+  profileAvatar: {
     width: 44,
     height: 44,
     borderRadius: 22,
     marginRight: 12,
   },
-  greeting: {
-    fontSize: 14,
+  greetingText: {
+    fontSize: 12,
     color: '#8E8E93',
+    fontWeight: '400',
+    marginBottom: 2,
   },
-  userName: {
-    fontSize: 18,
+  userNameText: {
+    fontSize: 16,
     fontWeight: '700',
-    color: '#1A1A1A',
+    color: '#111827',
   },
-  notificationBtn: {
+  bellButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#EAEAEA',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
     position: 'relative',
   },
-  notificationDot: {
+  bellDot: {
     position: 'absolute',
-    top: 10,
-    right: 12,
+    top: 8,
+    right: 10,
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#EF4444',
   },
-  combinedCard: {
-    backgroundColor: '#FFF',
-    marginHorizontal: 20,
-    borderRadius: 16,
-    marginBottom: 24,
-    overflow: 'hidden', // Ensures the inner elements clip to the rounded corners
+  heroSection: {
+    paddingHorizontal: 22,
+    marginTop: 10,
+    marginBottom: 14,
   },
-  searchSection: {
-    padding: 20,
-    backgroundColor: '#FFF',
-  },
-  searchTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 6,
-  },
-  searchSubtitle: {
+  heroEyebrow: {
     fontSize: 14,
-    color: '#8E8E93',
+    color: '#71717A',
+    fontWeight: '500',
+    marginBottom: 0,
   },
-  promoBanner: {
+  heroHeadline: {
+    fontSize: 42,
+    fontWeight: '800',
+    color: '#0D2314',
+    letterSpacing: -1.2,
+    lineHeight: 44,
+  },
+  segmentedToggleRow: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginBottom: 16,
+    gap: 12,
+  },
+  togglePill: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  togglePillActive: {
+    backgroundColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    shadowColor: '#0284C7',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  togglePillText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  togglePillTextActive: {
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  flightSearchCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 20,
+    borderRadius: 26,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    marginBottom: 26,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    position: 'relative',
+  },
+  flightLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  planeIconDepart: {
+    transform: [{ rotate: '-45deg' }],
+    marginRight: 14,
+  },
+  planeIconArrive: {
+    transform: [{ rotate: '45deg' }],
+    marginRight: 14,
+  },
+  flightCityText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  flightDividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 20,
+    position: 'relative',
+  },
+  flightDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginLeft: 34,
+    marginRight: 50,
+  },
+  flightSwapButton: {
+    position: 'absolute',
+    right: 0,
+    top: -10,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E0F2FE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#0284C7',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  flightLocationRowActive: {
+    backgroundColor: '#F0F9FF',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  flightFieldLabel: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  flightPlaceholder: {
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  flightCodeText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  searchFlightsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0055FF',
+    borderRadius: 16,
+    paddingVertical: 14,
+    marginTop: 10,
+    marginBottom: 6,
+    shadowColor: '#0055FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  searchFlightsText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  inlineInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 4,
+  },
+  flightInputInline: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0055FF',
+    paddingVertical: 2,
+    paddingHorizontal: 0,
+    margin: 0,
+  },
+  searchDropdown: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 20,
+    marginTop: -16,
+    marginBottom: 24,
+    borderRadius: 20,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  suggestionsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
-  promoContent: {
+  suggestionsTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9CA3AF',
+    letterSpacing: 0.8,
+  },
+  suggestionsScroll: {
+    maxHeight: 220,
+  },
+  suggestionRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
-  promoIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFF',
+  suggestionIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#EFF6FF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  promoText: {
-    color: '#FFF',
+  suggestionName: {
     fontSize: 15,
     fontWeight: '600',
-    lineHeight: 20,
+    color: '#0F172A',
+  },
+  suggestionSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  suggestionCode: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0055FF',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    overflow: 'hidden',
   },
   carouselContainer: {
     paddingHorizontal: 20,

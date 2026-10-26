@@ -4,6 +4,8 @@ export type Destination = {
   id: string;
   name: string;
   code: string;
+  lat?: number;
+  lon?: number;
   isStart: boolean;
   nights: number;
   isEnd: boolean;
@@ -13,6 +15,7 @@ export type Flight = {
   id: string;
   airline: string;
   code: string;
+  number?: string;
   depart: string;
   arrive: string;
   duration: string;
@@ -111,18 +114,24 @@ type TripContextType = {
   setUserSettings: React.Dispatch<React.SetStateAction<UserSettings>>;
 };
 
+import { fetchTouristAttraction, fetchFlightStatus } from '@/services/api';
+
 const TripContext = createContext<TripContextType | undefined>(undefined);
 
 export const TripProvider = ({ children }: { children: ReactNode }) => {
   const [destinations, setDestinations] = useState<Destination[]>([
-    { id: 'maa', name: 'Chennai', code: 'MAA', isStart: true, nights: 0, isEnd: false },
+    { id: 'bom', name: 'Mumbai', code: 'BOM', isStart: true, nights: 0, isEnd: false },
     { id: 'blr', name: 'Bangalore', code: 'BLR', isStart: false, nights: 3, isEnd: false },
     { id: 'goi', name: 'Goa', code: 'GOI', isStart: false, nights: 2, isEnd: false },
-    { id: 'bom', name: 'Mumbai', code: 'BOM', isStart: false, nights: 0, isEnd: true },
+    { id: 'del', name: 'New Delhi', code: 'DEL', isStart: false, nights: 0, isEnd: true },
   ]);
 
   const [passengers, setPassengers] = useState<Passengers>({ adults: 2, children: 1, infants: 0 });
-  const [departDate, setDepartDate] = useState<Date>(new Date('2024-08-12'));
+  const [departDate, setDepartDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d;
+  });
   const [selectedFlights, setSelectedFlights] = useState<Record<number, Flight>>({});
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
@@ -157,7 +166,7 @@ export const TripProvider = ({ children }: { children: ReactNode }) => {
     setSavedTrips(prev => [newTrip, ...prev]);
   };
 
-  const confirmTrip = () => {
+  const confirmTrip = async () => {
     const newTrip: SavedTrip = {
       id: Math.random().toString(36).substr(2, 9),
       destinations: [...destinations],
@@ -169,7 +178,8 @@ export const TripProvider = ({ children }: { children: ReactNode }) => {
     };
     setSavedTrips(prev => [newTrip, ...prev]);
 
-    const mainDest = destinations.find(d => !d.isStart)?.name || 'your destination';
+    const mainDestObj = destinations.find(d => !d.isStart);
+    const mainDest = mainDestObj?.name || 'your destination';
     
     const successNotif = {
       id: Date.now(),
@@ -181,17 +191,35 @@ export const TripProvider = ({ children }: { children: ReactNode }) => {
       time: 'Just now'
     };
 
-    const CITY_SUGGESTIONS: Record<string, string> = {
-      'Chennai': 'Marina Beach',
-      'Bangalore': 'Cubbon Park',
-      'Goa': 'Baga Beach',
-      'Mumbai': 'the Gateway of India',
-      'Delhi': 'the Red Fort',
-      'Hyderabad': 'Charminar',
-      'Kolkata': 'Victoria Memorial'
-    };
+    // Initialize our new groups array
+    let newGroups = [...notifications];
+    const todayIndex = newGroups.findIndex(g => g.section === 'Today');
+    if (todayIndex < 0) {
+      newGroups.unshift({ section: 'Today', data: [] });
+    }
+    const targetGroup = newGroups.find(g => g.section === 'Today')!;
     
-    const popularPlace = CITY_SUGGESTIONS[mainDest] || 'the local popular spots';
+    // Optimistically add success notif first
+    targetGroup.data = [successNotif, ...targetGroup.data];
+    setNotifications([...newGroups]);
+
+    // Async Fetch 1: Geoapify for local attraction
+    let popularPlace = 'the local popular spots';
+    if (mainDestObj?.lat && mainDestObj?.lon) {
+      const attraction = await fetchTouristAttraction(mainDestObj.lat, mainDestObj.lon);
+      if (attraction) popularPlace = attraction.name;
+    } else {
+      const CITY_SUGGESTIONS: Record<string, string> = {
+        'Chennai': 'Marina Beach',
+        'Bangalore': 'Cubbon Park',
+        'Goa': 'Baga Beach',
+        'Mumbai': 'the Gateway of India',
+        'Delhi': 'the Red Fort',
+        'Hyderabad': 'Charminar',
+        'Kolkata': 'Victoria Memorial'
+      };
+      popularPlace = CITY_SUGGESTIONS[mainDest] || 'the local popular spots';
+    }
 
     const suggestionNotif = {
       id: Date.now() + 1,
@@ -202,17 +230,35 @@ export const TripProvider = ({ children }: { children: ReactNode }) => {
       text: `Don't forget to visit ${popularPlace} while you're in ${mainDest}!`,
       time: 'Just now'
     };
+    
+    targetGroup.data = [suggestionNotif, ...targetGroup.data];
+    setNotifications([...newGroups]);
 
-    setNotifications(prev => {
-      const newGroups = [...prev];
-      const todayIndex = newGroups.findIndex(g => g.section === 'Today');
-      if (todayIndex >= 0) {
-        newGroups[todayIndex].data = [successNotif, suggestionNotif, ...newGroups[todayIndex].data];
-      } else {
-        newGroups.unshift({ section: 'Today', data: [successNotif, suggestionNotif] });
+    // Async Fetch 2: AviationStack for real-time flight status of the first leg
+    const firstFlight = selectedFlights[0];
+    if (firstFlight) {
+      // Use the flight code & number for lookup. 
+      const flightIata = `${firstFlight.code}${firstFlight.number || ''}`.replace(/\s+/g, '');
+      const flightStatusData = await fetchFlightStatus(flightIata);
+      
+      if (flightStatusData) {
+        const statusText = flightStatusData.status === 'active' 
+          ? `Flight ${flightIata} is in the air!` 
+          : `Flight ${flightIata} status: ${flightStatusData.status}.`;
+          
+        const flightNotif = {
+          id: Date.now() + 2,
+          type: 'Flight Status Alert',
+          icon: 'airplane',
+          color: '#FFB800',
+          bg: '#FFF9E6',
+          text: statusText,
+          time: 'Just now'
+        };
+        targetGroup.data = [flightNotif, ...targetGroup.data];
+        setNotifications([...newGroups]);
       }
-      return newGroups;
-    });
+    }
   };
 
   const clearBuilder = () => {
